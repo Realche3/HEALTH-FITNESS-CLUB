@@ -2,17 +2,21 @@
 Member Service
 --------------
 Contains business logic for member operations such as creating accounts,
-logging health metrics, managing fitness goals, and viewing member data.
+logging health metrics, managing fitness goals, class registrations,
+and viewing member data.
 """
-from typing import List
 
 from datetime import datetime
+from typing import List, Optional
+
 from app.db_utils import get_session
 from models.member import Member
 from models.health_metric import HealthMetric
 from models.fitness_goal import FitnessGoal
 from models.payment import Payment
+from models.class_ import Class
 from models.class_registration import ClassRegistration
+from models.pt_session import PTSession
 
 
 # --------------------------------------------------------------------------
@@ -290,3 +294,134 @@ def list_member_classes(member_id: int) -> List[Class]:
 
         classes = db.query(Class).filter(Class.id.in_(class_ids)).all()
         return classes
+    
+# --------------------------------------------------------------------------
+# MEMBER DASHBOARD
+# --------------------------------------------------------------------------
+
+def get_member_dashboard(member_id: int) -> Optional[dict]:
+    """
+    Build a dashboard summary for a member.
+
+    The dashboard includes:
+        - Basic member info (name, email).
+        - Latest health metric (weight, heart_rate, timestamp).
+        - Active fitness goals.
+        - Count of past classes attended.
+        - Upcoming group classes.
+        - Upcoming PT sessions.
+
+    Args:
+        member_id (int): ID of the member.
+
+    Returns:
+        dict | None: Dashboard dictionary or None if member not found.
+    """
+    now = datetime.now()
+
+    with get_session() as db:
+        member = db.get(Member, member_id)
+        if not member:
+            return None
+
+        # Latest health metric
+        latest_metric = (
+            db.query(HealthMetric)
+            .filter(HealthMetric.member_id == member_id)
+            .order_by(HealthMetric.timestamp.desc())
+            .first()
+        )
+
+        latest_metric_data = None
+        if latest_metric:
+            latest_metric_data = {
+                "weight": latest_metric.weight,
+                "heart_rate": latest_metric.heart_rate,
+                "timestamp": latest_metric.timestamp,
+            }
+
+        # Active goals
+        active_goals = (
+            db.query(FitnessGoal)
+            .filter(
+                FitnessGoal.member_id == member_id,
+                FitnessGoal.status == "active",
+            )
+            .all()
+        )
+        active_goals_data = [
+            {
+                "id": g.id,
+                "goal_type": g.goal_type,
+                "target_value": g.target_value,
+                "status": g.status,
+            }
+            for g in active_goals
+        ]
+
+        # Past class count
+        past_class_count = (
+            db.query(Class)
+            .join(ClassRegistration, Class.id == ClassRegistration.class_id)
+            .filter(
+                ClassRegistration.member_id == member_id,
+                Class.schedule_time < now,
+            )
+            .count()
+        )
+
+        # Upcoming group classes
+        upcoming_classes = (
+            db.query(Class)
+            .join(ClassRegistration, Class.id == ClassRegistration.class_id)
+            .filter(
+                ClassRegistration.member_id == member_id,
+                Class.schedule_time >= now,
+            )
+            .order_by(Class.schedule_time.asc())
+            .all()
+        )
+        upcoming_classes_data = [
+            {
+                "id": c.id,
+                "name": c.name,
+                "schedule_time": c.schedule_time,
+                "room_id": c.room_id,
+                "trainer_id": c.trainer_id,
+            }
+            for c in upcoming_classes
+        ]
+
+        # Upcoming PT sessions
+        upcoming_sessions = (
+            db.query(PTSession)
+            .filter(
+                PTSession.member_id == member_id,
+                PTSession.start_time >= now,
+                PTSession.status != "cancelled",
+            )
+            .order_by(PTSession.start_time.asc())
+            .all()
+        )
+        upcoming_sessions_data = [
+            {
+                "id": s.id,
+                "trainer_id": s.trainer_id,
+                "room_id": s.room_id,
+                "start_time": s.start_time,
+                "end_time": s.end_time,
+                "status": s.status,
+            }
+            for s in upcoming_sessions
+        ]
+
+        return {
+            "member_id": member.id,
+            "name": member.name,
+            "email": member.email,
+            "latest_metric": latest_metric_data,
+            "active_goals": active_goals_data,
+            "past_class_count": past_class_count,
+            "upcoming_classes": upcoming_classes_data,
+            "upcoming_pt_sessions": upcoming_sessions_data,
+        }

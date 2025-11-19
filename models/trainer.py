@@ -22,6 +22,7 @@ class Trainer(Base):
     Relationships:
         sessions: List of PTSession entries.
         classes: List of Class entries.
+        availabilities: List of TrainerAvailability time windows.
     """
 
     __tablename__ = "trainers"
@@ -37,6 +38,11 @@ class Trainer(Base):
     )
     classes = relationship(
         "Class",
+        back_populates="trainer",
+        cascade="all, delete-orphan",
+    )
+    availabilities = relationship(
+        "TrainerAvailability",
         back_populates="trainer",
         cascade="all, delete-orphan",
     )

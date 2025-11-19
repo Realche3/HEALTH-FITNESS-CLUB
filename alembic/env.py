@@ -28,6 +28,8 @@ import models.health_metric
 import models.payment
 import models.pt_session
 import models.class_registration
+import models.trainer_availability
+
 
 target_metadata = Base.metadata
 

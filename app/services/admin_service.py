@@ -2,20 +2,23 @@
 Admin Service
 -------------
 Contains business logic for administrative operations such as managing rooms,
-creating and updating classes, and assigning trainers/rooms.
-
-These functions are intended to be used by an "admin" role in the system.
+classes, equipment, and simulated billing/payments.
 """
 
 from datetime import datetime, date
 from typing import List, Optional
 
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, or_
 
 from app.db_utils import get_session
 from models.room import Room
 from models.class_ import Class
 from models.trainer import Trainer
+from models.equipment import Equipment
+from models.equipment_issue import EquipmentIssue
+from models.payment import Payment
+from models.pt_session import PTSession
+
 
 
 # --------------------------------------------------------------------------
@@ -66,9 +69,10 @@ def create_class(
     Create a new group class.
 
     Performs basic checks:
-    - Trainer must exist.
-    - Room must exist.
-    - Class capacity cannot exceed room capacity.
+        - Trainer must exist.
+        - Room must exist.
+        - Class capacity cannot exceed room capacity.
+        - Prevents double-booking of the room at the same schedule_time.
 
     Args:
         name (str): Class name.
@@ -90,6 +94,18 @@ def create_class(
 
         if capacity > room.capacity:
             # Do not allow class capacity higher than room capacity
+            return None
+
+        # Room double-booking check: another class in same room at same time
+        conflict = (
+            db.query(Class)
+            .filter(
+                Class.room_id == room_id,
+                Class.schedule_time == schedule_time,
+            )
+            .first()
+        )
+        if conflict:
             return None
 
         gym_class = Class(
@@ -133,7 +149,10 @@ def change_class_room(
     """
     Change the room assigned to a class.
 
-    Ensures the new room exists and has enough capacity for the class.
+    Ensures:
+        - The new room exists.
+        - The new room has enough capacity for the class.
+        - No double-booking of the new room at that class's schedule_time.
 
     Args:
         class_id (int): ID of the class to move.
@@ -141,7 +160,7 @@ def change_class_room(
 
     Returns:
         Class | None: Updated Class object, or None if class/room invalid
-        or capacity check fails.
+        or capacity check / room conflict fails.
     """
     with get_session() as db:
         gym_class = db.get(Class, class_id)
@@ -154,8 +173,22 @@ def change_class_room(
             # Cannot move if room too small
             return None
 
+        # Check for another class in the new room at the same time
+        conflict = (
+            db.query(Class)
+            .filter(
+                Class.room_id == new_room_id,
+                Class.schedule_time == gym_class.schedule_time,
+                Class.id != class_id,
+            )
+            .first()
+        )
+        if conflict:
+            return None
+
         gym_class.room_id = new_room_id
         return gym_class
+
 
 
 def assign_trainer_to_class(
@@ -208,3 +241,226 @@ def list_classes_for_day(day: date) -> List[Class]:
         )
         result = db.execute(query).scalars().all()
         return result
+
+# --------------------------------------------------------------------------
+# EQUIPMENT MANAGEMENT & MAINTENANCE
+# --------------------------------------------------------------------------
+
+def create_equipment(
+    name: str,
+    equipment_type: Optional[str],
+    room_id: Optional[int],
+    status: str = "operational",
+) -> Optional[Equipment]:
+    """
+    Create a new equipment record and optionally assign it to a room.
+
+    Args:
+        name (str): Equipment name (e.g., "Treadmill #1").
+        equipment_type (str | None): Type/category (e.g., "treadmill").
+        room_id (int | None): Room ID where the equipment is located.
+        status (str): Initial operational status.
+
+    Returns:
+        Equipment | None: Created Equipment object, or None if room_id invalid.
+    """
+    with get_session() as db:
+        room = None
+        if room_id is not None:
+            room = db.get(Room, room_id)
+            if not room:
+                return None
+
+        equipment = Equipment(
+            name=name,
+            type=equipment_type,
+            status=status,
+            room_id=room_id,
+        )
+        db.add(equipment)
+        return equipment
+
+
+def list_equipment(room_id: Optional[int] = None) -> List[Equipment]:
+    """
+    List equipment, optionally filtered by room.
+
+    Args:
+        room_id (int | None): If provided, only equipment in this room is returned.
+
+    Returns:
+        list[Equipment]: List of equipment records.
+    """
+    with get_session() as db:
+        query = db.query(Equipment)
+        if room_id is not None:
+            query = query.filter(Equipment.room_id == room_id)
+        return query.all()
+
+
+def log_equipment_issue(equipment_id: int, description: str) -> Optional[EquipmentIssue]:
+    """
+    Log a new maintenance issue for a given piece of equipment.
+
+    Args:
+        equipment_id (int): ID of the equipment.
+        description (str): Description of the problem.
+
+    Returns:
+        EquipmentIssue | None: Created issue, or None if equipment not found.
+    """
+    with get_session() as db:
+        equipment = db.get(Equipment, equipment_id)
+        if not equipment:
+            return None
+
+        issue = EquipmentIssue(
+            equipment_id=equipment_id,
+            description=description,
+            status="open",
+        )
+        db.add(issue)
+        # Optionally mark equipment as out of order
+        equipment.status = "out_of_order"
+        return issue
+
+
+def update_equipment_issue_status(
+    issue_id: int,
+    new_status: str,
+) -> Optional[EquipmentIssue]:
+    """
+    Update the status of an equipment issue. If the issue is resolved,
+    the resolved_at timestamp is set and the equipment status can be
+    marked back to 'operational'.
+
+    Args:
+        issue_id (int): ID of the EquipmentIssue.
+        new_status (str): New status (e.g., "in_progress", "resolved").
+
+    Returns:
+        EquipmentIssue | None: Updated issue or None if not found.
+    """
+    with get_session() as db:
+        issue = db.get(EquipmentIssue, issue_id)
+        if not issue:
+            return None
+
+        issue.status = new_status
+
+        if new_status == "resolved":
+            issue.resolved_at = datetime.now()
+            # Optionally set equipment back to operational
+            equipment = issue.equipment
+            if equipment and equipment.status != "operational":
+                equipment.status = "operational"
+
+        return issue
+
+
+def list_equipment_issues(
+    room_id: Optional[int] = None,
+    status: Optional[str] = None,
+) -> List[EquipmentIssue]:
+    """
+    List equipment issues, optionally filtered by room and/or status.
+
+    Args:
+        room_id (int | None): Only issues for equipment in this room.
+        status  (str | None): Only issues with this status.
+
+    Returns:
+        list[EquipmentIssue]: Matching issue records.
+    """
+    with get_session() as db:
+        query = db.query(EquipmentIssue).join(Equipment)
+
+        if room_id is not None:
+            query = query.filter(Equipment.room_id == room_id)
+
+        if status is not None:
+            query = query.filter(EquipmentIssue.status == status)
+
+        return query.all()
+
+# --------------------------------------------------------------------------
+# BILLING & PAYMENT (SIMULATED)
+# --------------------------------------------------------------------------
+
+def create_member_payment(
+    member_id: int,
+    amount: float,
+    method: str,
+    status: str = "pending",
+) -> Optional[Payment]:
+    """
+    Create a payment record for a member, simulating an invoice/payment
+    entry. The status can later be updated (e.g., 'pending' -> 'completed').
+
+    Args:
+        member_id (int): ID of the member.
+        amount (float): Amount due or paid.
+        method (str): Payment method (e.g., 'cash', 'credit').
+        status (str): Initial status (e.g., 'pending', 'completed').
+
+    Returns:
+        Payment | None: Created Payment or None if member not found.
+    """
+    with get_session() as db:
+        # We don't strictly need to fetch Member, but we can validate ID
+        from models.member import Member  # local import to avoid cycles
+
+        member = db.get(Member, member_id)
+        if not member:
+            return None
+
+        payment = Payment(
+            member_id=member_id,
+            amount=amount,
+            method=method,
+            status=status,
+            created_at=datetime.now(),
+        )
+        db.add(payment)
+        return payment
+
+
+def update_payment_status(payment_id: int, new_status: str) -> Optional[Payment]:
+    """
+    Update the status of an existing payment (e.g., to simulate an invoice
+    being paid or refunded).
+
+    Args:
+        payment_id (int): ID of the payment record.
+        new_status (str): New status value.
+
+    Returns:
+        Payment | None: Updated Payment or None if not found.
+    """
+    with get_session() as db:
+        payment = db.get(Payment, payment_id)
+        if not payment:
+            return None
+
+        payment.status = new_status
+        return payment
+
+
+def list_member_payments(member_id: int) -> List[Payment]:
+    """
+    List all payments associated with a given member.
+
+    Args:
+        member_id (int): ID of the member.
+
+    Returns:
+        list[Payment]: List of payment records.
+    """
+    with get_session() as db:
+        payments = (
+            db.query(Payment)
+            .filter(Payment.member_id == member_id)
+            .order_by(Payment.created_at.desc())
+            .all()
+        )
+        return payments

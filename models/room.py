@@ -2,7 +2,7 @@
 Room Model
 ----------
 Represents a physical room inside the fitness club. Rooms host group classes
-and can also be booked for PT sessions.
+and can also be booked for PT sessions and contain equipment.
 """
 
 from sqlalchemy import Column, Integer, String
@@ -22,6 +22,7 @@ class Room(Base):
     Relationships:
         classes: List of Class entries hosted in this room.
         sessions: List of PTSession entries conducted in this room.
+        equipment: List of Equipment items located in this room.
     """
 
     __tablename__ = "rooms"
@@ -37,6 +38,11 @@ class Room(Base):
     )
     sessions = relationship(
         "PTSession",
+        back_populates="room",
+        cascade="all, delete-orphan",
+    )
+    equipment = relationship(
+        "Equipment",
         back_populates="room",
         cascade="all, delete-orphan",
     )

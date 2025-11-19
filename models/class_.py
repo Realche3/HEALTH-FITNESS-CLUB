@@ -24,6 +24,7 @@ class Class(Base):
     Relationships:
         trainer: Trainer teaching the class.
         room: Room where the class is held.
+        registrations: List of ClassRegistration entries (members registered).
     """
 
     __tablename__ = "classes"
@@ -37,6 +38,12 @@ class Class(Base):
 
     trainer = relationship("Trainer", back_populates="classes")
     room = relationship("Room", back_populates="classes")
+
+    registrations = relationship(
+        "ClassRegistration",
+        back_populates="gym_class",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self) -> str:
         return f"<Class id={self.id} name={self.name!r} trainer_id={self.trainer_id}>"

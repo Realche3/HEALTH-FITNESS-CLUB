@@ -2,7 +2,7 @@
 Member Model
 ------------
 Represents a gym member. Members can log health metrics, set fitness goals,
-schedule personal training sessions, and make payments.
+schedule personal training sessions, register for group classes, and make payments.
 """
 
 from sqlalchemy import Column, Integer, String, Date, Index
@@ -27,6 +27,7 @@ class Member(Base):
         goals: List of FitnessGoal entries.
         sessions: List of PTSession entries.
         payments: List of Payment records.
+        class_registrations: List of ClassRegistration records (group classes).
     """
 
     __tablename__ = "members"
@@ -38,7 +39,6 @@ class Member(Base):
     email = Column(String, unique=True, nullable=False)
     phone = Column(String)
 
-    # Relationships
     health_metrics = relationship(
         "HealthMetric",
         back_populates="member",
@@ -59,8 +59,12 @@ class Member(Base):
         back_populates="member",
         cascade="all, delete-orphan",
     )
+    class_registrations = relationship(
+        "ClassRegistration",
+        back_populates="member",
+        cascade="all, delete-orphan",
+    )
 
-    # Explicit index requirement for COMP3005
     __table_args__ = (
         Index("ix_members_email", "email"),
     )

@@ -27,6 +27,7 @@ import models.fitness_goal
 import models.health_metric
 import models.payment
 import models.pt_session
+import models.class_registration
 
 target_metadata = Base.metadata
 

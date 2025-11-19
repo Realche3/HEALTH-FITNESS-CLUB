@@ -4,6 +4,7 @@ Member Service
 Contains business logic for member operations such as creating accounts,
 logging health metrics, managing fitness goals, and viewing member data.
 """
+from typing import List
 
 from datetime import datetime
 from app.db_utils import get_session
@@ -11,6 +12,7 @@ from models.member import Member
 from models.health_metric import HealthMetric
 from models.fitness_goal import FitnessGoal
 from models.payment import Payment
+from models.class_registration import ClassRegistration
 
 
 # --------------------------------------------------------------------------
@@ -178,3 +180,113 @@ def get_member_profile(member_id: int):
             "metrics": len(member.health_metrics),
             "payments": len(member.payments),
         }
+
+
+# --------------------------------------------------------------------------
+# GROUP CLASS REGISTRATION
+# --------------------------------------------------------------------------
+
+def register_for_class(member_id: int, class_id: int) -> bool:
+    """
+    Register a member for a group fitness class if capacity allows.
+
+    Business rules:
+        - Class must exist.
+        - Member must exist.
+        - Member cannot register for the same class twice.
+        - Class cannot exceed its capacity (based on registrations count).
+
+    Args:
+        member_id (int): ID of the member.
+        class_id (int): ID of the class.
+
+    Returns:
+        bool: True if registration succeeded, False otherwise.
+    """
+    with get_session() as db:
+        member = db.get(Member, member_id)
+        gym_class = db.get(Class, class_id)
+
+        if not member or not gym_class:
+            return False
+
+        # Check if already registered
+        existing = (
+            db.query(ClassRegistration)
+            .filter(
+                ClassRegistration.member_id == member_id,
+                ClassRegistration.class_id == class_id,
+            )
+            .first()
+        )
+        if existing:
+            return False
+
+        # Check capacity
+        current_count = (
+            db.query(ClassRegistration)
+            .filter(ClassRegistration.class_id == class_id)
+            .count()
+        )
+        if current_count >= gym_class.capacity:
+            return False
+
+        registration = ClassRegistration(
+            member_id=member_id,
+            class_id=class_id,
+            registered_at=datetime.now(),
+        )
+        db.add(registration)
+        return True
+
+
+def cancel_class_registration(member_id: int, class_id: int) -> bool:
+    """
+    Cancel an existing class registration for a member.
+
+    Args:
+        member_id (int): ID of the member.
+        class_id (int): ID of the class.
+
+    Returns:
+        bool: True if a registration was found and deleted, False otherwise.
+    """
+    with get_session() as db:
+        registration = (
+            db.query(ClassRegistration)
+            .filter(
+                ClassRegistration.member_id == member_id,
+                ClassRegistration.class_id == class_id,
+            )
+            .first()
+        )
+        if not registration:
+            return False
+
+        db.delete(registration)
+        return True
+
+
+def list_member_classes(member_id: int) -> List[Class]:
+    """
+    List all classes a member is registered for.
+
+    Args:
+        member_id (int): ID of the member.
+
+    Returns:
+        list[Class]: All classes the member is currently registered in.
+    """
+    with get_session() as db:
+        registrations = (
+            db.query(ClassRegistration)
+            .filter(ClassRegistration.member_id == member_id)
+            .all()
+        )
+        class_ids = [r.class_id for r in registrations]
+
+        if not class_ids:
+            return []
+
+        classes = db.query(Class).filter(Class.id.in_(class_ids)).all()
+        return classes

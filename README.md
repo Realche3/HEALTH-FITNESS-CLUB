@@ -158,7 +158,7 @@ All documentation is in the `docs/` folder:
 | Index | Completed |
 | ORM usage (no raw SQL except required objects) | Completed |
 | Full working system | Completed |
-| ERD + Report + Video Demo | Completed |
+| ERD + Report + Video Demo | In progress |
 
 ---
 

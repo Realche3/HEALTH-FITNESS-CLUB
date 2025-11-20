@@ -1,41 +1,46 @@
 """
-Terminal CLI Application
-------------------------
-Simplified text-based interface to interact with the Health & Fitness Club
-Management System.
+Health & Fitness Club - CLI v3
+------------------------------
+Clean, guided, and minimal command-line interface for the
+Health & Fitness Club Management System.
 
-Roles and Features (exposed in CLI):
+Goals:
+    - Easy to demo.
+    - Minimal menu options.
+    - Guided workflows (always list existing data before asking for IDs).
+    - Only expose core flows needed to show requirements.
+
+Roles & Flows:
 
 Member:
-    - Register and login (by email)
-    - View dashboard (latest stats, goals, sessions, classes)
-    - Log health metrics (historical)
-    - Create fitness goals
-    - Register for group classes
-    - Schedule PT sessions
+    - Register / Login by email
+    - View dashboard (latest metrics, goals, classes, PT sessions)
+    - Log a health metric
+    - Create a fitness goal
+    - Book a group class (pick day → see classes → choose one)
+    - Book a PT session (see trainers → choose one → choose room → time)
 
 Trainer:
-    - Login by trainer ID
+    - Login (choose from list of trainers)
     - View upcoming schedule (classes + PT sessions)
-    - Define availability (non-overlapping windows)
+    - Add availability (no overlap)
     - Lookup assigned members (read-only goals + latest metric)
 
 Admin:
-    - Login with hardcoded credentials (demo)
-    - Create trainers
-    - Create rooms
-    - Create classes
-    - List classes for a specific day
-    - Log equipment issues
-    - Create and list member payments
+    - Login (hardcoded demo credentials)
+    - Create trainer
+    - Create room
+    - Schedule class (choose trainer + room)
+    - View classes for a given day
+    - Record member payment (choose member → enter amount/method)
 
 Note:
-    This CLI shows a subset of functionality to keep interaction simple
-    while still demonstrating all required features for the COMP3005 project.
+    This CLI is intentionally simple. All heavy business rules live in the
+    service layer and are enforced by SQLAlchemy ORM and PostgreSQL.
 """
 
 from datetime import datetime, date
-from typing import Optional
+from typing import Optional, List, TypeVar, Callable
 
 from app.db_utils import get_session
 
@@ -65,17 +70,21 @@ from app.services.admin_service import (
     list_rooms,
     create_class,
     list_classes_for_day,
-    create_equipment,
-    log_equipment_issue,
     create_member_payment,
     list_member_payments,
 )
+
+# ORM models used for listing/selection
 from models.member import Member
 from models.trainer import Trainer
+from models.room import Room
+
+# Generic type for selection helper
+T = TypeVar("T")
 
 
 # --------------------------------------------------------------------------
-# HELPER INPUT FUNCTIONS
+# BASIC INPUT HELPERS
 # --------------------------------------------------------------------------
 
 
@@ -118,6 +127,118 @@ def prompt_datetime(prompt: str) -> datetime:
 
 
 # --------------------------------------------------------------------------
+# GENERIC SELECTION HELPER
+# --------------------------------------------------------------------------
+
+
+def choose_from_list(
+    items: List[T],
+    label: str,
+    formatter: Callable[[T], str],
+) -> Optional[T]:
+    """
+    Generic helper: print a list of items and let user pick one by ID.
+
+    Args:
+        items: List of objects to choose from.
+        label: Label for the list (e.g., "Members", "Trainers").
+        formatter: Function that converts each object to a display string.
+
+    Returns:
+        The chosen object, or None if list is empty or invalid choice.
+    """
+    print(f"\n=== {label} ===")
+    if not items:
+        print(f"No {label.lower()} found.")
+        return None
+
+    for item in items:
+        print(formatter(item))
+
+    try:
+        chosen_id = int(input(f"Enter ID of the {label[:-1]}: ").strip())
+    except ValueError:
+        print("Invalid input.")
+        return None
+
+    for item in items:
+        # Assume each item has an 'id' attribute
+        if getattr(item, "id", None) == chosen_id:
+            return item
+
+    print(f"No {label[:-1]} with that ID.")
+    return None
+
+
+# --------------------------------------------------------------------------
+# LIST HELPERS FOR SPECIFIC ENTITIES
+# --------------------------------------------------------------------------
+
+
+def list_members() -> List[Member]:
+    """Fetch and print all members, return list."""
+    with get_session() as db:
+        members = db.query(Member).order_by(Member.id).all()
+
+    if not members:
+        print("\n=== Members ===")
+        print("No members found.")
+    else:
+        print("\n=== Members ===")
+        for m in members:
+            print(f"ID={m.id} | {m.name} ({m.email})")
+
+    return members
+
+
+def choose_member() -> Optional[Member]:
+    """Guided selection: choose a member from printed list."""
+    with get_session() as db:
+        members = db.query(Member).order_by(Member.id).all()
+    return choose_from_list(members, "Members", lambda m: f"ID={m.id} | {m.name} ({m.email})")
+
+
+def list_trainers() -> List[Trainer]:
+    """Fetch and print all trainers, return list."""
+    with get_session() as db:
+        trainers = db.query(Trainer).order_by(Trainer.id).all()
+
+    print("\n=== Trainers ===")
+    if not trainers:
+        print("No trainers found. Ask admin to create some.")
+    else:
+        for t in trainers:
+            print(f"ID={t.id} | {t.name} (specialization={t.specialization})")
+
+    return trainers
+
+
+def choose_trainer() -> Optional[Trainer]:
+    """Guided selection: choose a trainer from printed list."""
+    with get_session() as db:
+        trainers = db.query(Trainer).order_by(Trainer.id).all()
+    return choose_from_list(trainers, "Trainers", lambda t: f"ID={t.id} | {t.name} ({t.specialization})")
+
+
+def list_rooms_simple() -> List[Room]:
+    """Fetch and print all rooms, return list."""
+    rooms = list_rooms()
+    print("\n=== Rooms ===")
+    if not rooms:
+        print("No rooms found.")
+    else:
+        for r in rooms:
+            print(f"ID={r.id} | {r.name} (capacity={r.capacity})")
+    return rooms
+
+
+def choose_room() -> Optional[Room]:
+    """Guided selection: choose a room from printed list."""
+    rooms = list_rooms()
+    return choose_from_list(rooms, "Rooms", lambda r: f"ID={r.id} | {r.name} (capacity={r.capacity})")
+
+
+# --------------------------------------------------------------------------
 # MEMBER LOGIN / REGISTRATION
 # --------------------------------------------------------------------------
 
@@ -129,7 +250,10 @@ def find_member_by_email(email: str) -> Optional[Member]:
 
 
 def member_register_flow() -> Optional[Member]:
-    """Register a new member or log in if email already exists."""
+    """
+    Register a new member. If email already exists,
+    log in that member instead.
+    """
     print("\n=== Member Registration ===")
     name = input("Full name: ").strip()
     email = input("Email: ").strip()
@@ -162,7 +286,7 @@ def member_register_flow() -> Optional[Member]:
 
 
 def member_login_flow() -> Optional[Member]:
-    """Login a member by email."""
+    """Login a member by email only (simple auth)."""
     print("\n=== Member Login ===")
     email = input("Email: ").strip()
     member = find_member_by_email(email)
@@ -172,20 +296,6 @@ def member_login_flow() -> Optional[Member]:
     print(f"Welcome back, {member.name}!")
     return member
 
-def list_all_trainers() -> None:
-    """
-    Print a simple list of all trainers with their IDs.
-    """
-    from app.db_utils import get_session
-
-    print("\n=== Trainers ===")
-    with get_session() as db:
-        trainers = db.query(Trainer).all()
-        if not trainers:
-            print("No trainers found. Ask admin to create some.")
-            return
-        for t in trainers:
-            print(f"ID={t.id} | {t.name} (specialization={t.specialization})")
 
 # --------------------------------------------------------------------------
 # MEMBER MENU
@@ -193,20 +303,17 @@ def list_all_trainers() -> None:
 
 
 def member_update_profile(member: Member) -> None:
-    """Allow member to update basic profile fields."""
+    """Allow member to update a few profile fields."""
     print("\n=== Update Profile ===")
     print("Leave fields blank to keep current values.\n")
 
     new_name = input(f"Name [{member.name}]: ").strip() or None
-    new_email = input("Email (optional): ").strip() or None
-    new_phone = input("Phone (optional): ").strip() or None
-    new_gender = input("Gender (optional): ").strip() or None
+    new_phone = input(f"Phone [{member.phone or ''}]: ").strip() or None
+    new_gender = input(f"Gender [{member.gender or ''}]: ").strip() or None
 
     updates = {}
     if new_name:
         updates["name"] = new_name
-    if new_email:
-        updates["email"] = new_email
     if new_phone:
         updates["phone"] = new_phone
     if new_gender:
@@ -220,23 +327,46 @@ def member_update_profile(member: Member) -> None:
     if updated:
         print("Profile updated.")
         member.name = updated.name
-        member.email = updated.email
         member.phone = updated.phone
         member.gender = updated.gender
     else:
         print("Failed to update profile.")
 
 
+def member_choose_class_for_day() -> Optional[int]:
+    """
+    Guided flow: ask for a day, list all classes that day, let member pick one.
+
+    Returns:
+        int | None: chosen class ID, or None if none selected/available.
+    """
+    day = prompt_date("Enter day to see available classes")
+    classes = list_classes_for_day(day)
+    print(f"\n--- Classes on {day} ---")
+    if not classes:
+        print("No classes scheduled on this day.")
+        return None
+
+    for c in classes:
+        print(
+            f"ID={c.id} | {c.name} at {c.schedule_time} "
+            f"(trainer_id={c.trainer_id}, room_id={c.room_id})"
+        )
+
+    class_id = prompt_int("Enter the ID of the class you want to register for: ")
+    return class_id
+
+
 def member_menu(member: Member) -> None:
-    """Display and handle member menu."""
+    """Main menu for a logged-in member (compact and guided)."""
     while True:
         print(f"\n=== Member Menu ({member.name}) ===")
         print("1. View dashboard")
         print("2. Update profile")
         print("3. Log health metric")
         print("4. Create fitness goal")
-        print("5. Register for group class")
-        print("6. Schedule PT session")
+        print("5. Book group class")
+        print("6. Book PT session")
         print("0. Logout")
 
         choice = input("Select an option: ").strip()
@@ -275,24 +405,31 @@ def member_menu(member: Member) -> None:
             print(f"Created goal id={goal.id}.")
 
         elif choice == "5":
-            print("\n=== Register for Group Class ===")
-            class_id = prompt_int("Class ID: ")
-            success = register_for_class(member.id, class_id)
-            if success:
-                print("Registration successful.")
+            print("\n=== Book Group Class ===")
+            class_id = member_choose_class_for_day()
+            if class_id is None:
+                print("No class selected.")
             else:
-                print("Failed to register. Class may be full, invalid, or already registered.")
+                success = register_for_class(member.id, class_id)
+                if success:
+                    print("Registration successful.")
+                else:
+                    print("Failed to register. Class may be full, invalid, or already registered.")
 
         elif choice == "6":
-            print("\n=== Schedule PT Session ===")
-            trainer_id = prompt_int("Trainer ID: ")
-            room_id_str = input("Room ID (blank for none): ").strip()
-            room_id = int(room_id_str) if room_id_str else None
+            print("\n=== Book PT Session ===")
+            trainer = choose_trainer()
+            if not trainer:
+                print("Cannot book PT session without a trainer.")
+                continue
+
+            room = choose_room()
+            room_id = room.id if room else None
+
             start_time = prompt_datetime("Session start time")
-            # end_time optional, default 1 hour in service
             session = schedule_pt_session(
                 member_id=member.id,
-                trainer_id=trainer_id,
+                trainer_id=trainer.id,
                 room_id=room_id,
                 start_time=start_time,
                 end_time=None,
@@ -315,19 +452,25 @@ def member_menu(member: Member) -> None:
 
 
 def trainer_login() -> Optional[Trainer]:
-    """Simple trainer login by ID."""
+    """
+    Trainer login: show all trainers, let them pick their ID.
+    Simple but more user friendly than typing ID blindly.
+    """
     print("\n=== Trainer Login ===")
-    trainer_id = prompt_int("Trainer ID: ")
-    trainer = get_trainer(trainer_id)
-    if not trainer:
-        print("No trainer found with that ID.")
+    trainers = list_trainers()
+    if not trainers:
         return None
+
+    trainer = choose_trainer()
+    if not trainer:
+        return None
+
     print(f"Welcome, {trainer.name}.")
     return trainer
 
 
 def trainer_menu(trainer: Trainer) -> None:
-    """Display and handle trainer menu."""
+    """Main menu for a logged-in trainer."""
     while True:
         print(f"\n=== Trainer Menu ({trainer.name}) ===")
         print("1. View upcoming schedule")
@@ -419,7 +562,7 @@ def admin_login() -> bool:
 
 
 def admin_create_trainer() -> None:
-    """Create a trainer (admin-only)."""
+    """Create a trainer (admin-only, guided)."""
     print("\n=== Create Trainer ===")
     name = input("Trainer name: ").strip()
     specialization = input("Specialization (optional): ").strip() or None
@@ -431,16 +574,14 @@ def admin_create_trainer() -> None:
 
 
 def admin_menu() -> None:
-    """Display and handle admin menu."""
+    """Main menu for logged-in admin (minimal but complete)."""
     while True:
         print("\n=== Admin Menu ===")
         print("1. Create trainer")
         print("2. Create room")
-        print("3. List rooms")
-        print("4. Create class")
-        print("5. List classes for a day")
-        print("6. Log equipment issue")
-        print("7. Create member payment and list payments")
+        print("3. Schedule class")
+        print("4. View classes for a day")
+        print("5. Record member payment")
         print("0. Logout")
 
         choice = input("Select an option: ").strip()
@@ -456,34 +597,34 @@ def admin_menu() -> None:
             print(f"Created room id={room.id} name={room.name} capacity={room.capacity}.")
 
         elif choice == "3":
-            rooms = list_rooms()
-            print("\n--- Rooms ---")
-            if not rooms:
-                print("No rooms found.")
-            else:
-                for room in rooms:
-                    print(f"ID={room.id} | {room.name} (capacity={room.capacity})")
-
-        elif choice == "4":
-            print("\n=== Create Class ===")
+            print("\n=== Schedule Class ===")
             name = input("Class name: ").strip()
             capacity = prompt_int("Class capacity: ")
-            trainer_id = prompt_int("Trainer ID: ")
-            room_id = prompt_int("Room ID: ")
+
+            trainer = choose_trainer()
+            if not trainer:
+                print("Cannot create class without a valid trainer.")
+                continue
+
+            room = choose_room()
+            if not room:
+                print("Cannot create class without a valid room.")
+                continue
+
             schedule_time = prompt_datetime("Class time")
             gym_class = create_class(
                 name=name,
                 capacity=capacity,
-                trainer_id=trainer_id,
-                room_id=room_id,
+                trainer_id=trainer.id,
+                room_id=room.id,
                 schedule_time=schedule_time,
             )
             if gym_class is None:
-                print("Failed to create class (check trainer/room/capacity or conflicts).")
+                print("Failed to create class (capacity or room conflict).")
             else:
                 print(f"Created class id={gym_class.id} at {gym_class.schedule_time}.")
 
-        elif choice == "5":
+        elif choice == "4":
             day = prompt_date("Enter day to list classes")
             classes = list_classes_for_day(day)
             print(f"\n--- Classes on {day} ---")
@@ -496,30 +637,17 @@ def admin_menu() -> None:
                         f"(trainer_id={c.trainer_id}, room_id={c.room_id})"
                     )
 
-        elif choice == "6":
-            print("\n=== Log Equipment Issue ===")
-            eq_name = input("Equipment name: ").strip()
-            room_id_str = input("Room ID (blank if not assigned): ").strip()
-            room_id = int(room_id_str) if room_id_str else None
-            equipment = create_equipment(
-                name=eq_name,
-                equipment_type=None,
-                room_id=room_id,
-            )
-            description = input("Issue description: ").strip()
-            issue = log_equipment_issue(equipment.id, description)
-            if issue:
-                print(f"Logged issue id={issue.id} for equipment {equipment.id}.")
-            else:
-                print("Failed to log issue.")
+        elif choice == "5":
+            print("\n=== Record Member Payment ===")
+            member = choose_member()
+            if not member:
+                print("Cannot create payment without a valid member.")
+                continue
 
-        elif choice == "7":
-            print("\n=== Member Payment ===")
-            member_id = prompt_int("Member ID: ")
             amount = prompt_float("Amount: ")
             method = input("Method (cash/credit/debit): ").strip()
             payment = create_member_payment(
-                member_id=member_id,
+                member_id=member.id,
                 amount=amount,
                 method=method,
                 status="completed",
@@ -529,7 +657,7 @@ def admin_menu() -> None:
                     f"Created payment id={payment.id} amount={payment.amount} "
                     f"status={payment.status}"
                 )
-                payments = list_member_payments(member_id)
+                payments = list_member_payments(member.id)
                 print("\n-- Member Payments --")
                 for p in payments:
                     print(
@@ -537,7 +665,7 @@ def admin_menu() -> None:
                         f"method={p.method} at {p.created_at}"
                     )
             else:
-                print("Failed to create payment (invalid member?).")
+                print("Failed to create payment.")
 
         elif choice == "0":
             print("Admin logging out...")
@@ -552,7 +680,10 @@ def admin_menu() -> None:
 
 
 def main_menu() -> None:
-    """Entry point for the CLI."""
+    """
+    Entry point for the CLI.
+    Users choose their role, then follow guided menus.
+    """
     while True:
         print("\n==============================")
         print("  Health & Fitness Club CLI  ")

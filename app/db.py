@@ -10,7 +10,7 @@ DATABASE_URL = "postgresql+psycopg2://postgres:622950678@localhost:5432/fitness_
 # Engine: main connection object
 engine = create_engine(
     DATABASE_URL,
-    echo=True,      # Shows SQL in console
+    echo=False,      # Shows SQL in console
     future=True,
 )
 

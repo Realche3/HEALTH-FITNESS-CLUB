@@ -1,6 +1,6 @@
 # Health & Fitness Club Management System
 COMP3005 Final Project  
-Student: Mohamed Cherif Bah — ID: 101292844  
+Student: Mohamed Cherif
 Course: Group Final Project 79
 
 ---

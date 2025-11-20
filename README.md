@@ -20,7 +20,7 @@ The system supports three user roles and enforces all necessary business rules:
 - Trainers  
 - Administrative staff
 
-The database layer includes a SQL View, Trigger, Stored Function, and Index, meeting all COMP3005 requirements.
+The database layer includes a SQL View, Trigger, Stored Function, and Index, meeting all project requirements.
 
 ---
 

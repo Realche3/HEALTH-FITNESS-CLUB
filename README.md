@@ -142,7 +142,7 @@ All documentation is in the `docs/` folder:
 
 - report.pdf — Final project report  
 - ERD.png — Entity Relationship Diagram  
-- demo.mp4 — CLI demonstration video  
+- demo.mp4 — CLI demonstration video (see google drive link) 
 
 ---
 
@@ -158,7 +158,7 @@ All documentation is in the `docs/` folder:
 | Index | Completed |
 | ORM usage (no raw SQL except required objects) | Completed |
 | Full working system | Completed |
-| ERD + Report + Video Demo | In progress |
+| ERD + Report + Video Demo | Completed |
 
 ---
 

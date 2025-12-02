@@ -142,7 +142,8 @@ All documentation is in the `docs/` folder:
 
 - report.pdf — Final project report  
 - ERD.png — Entity Relationship Diagram  
-- demo.mp4 — CLI demonstration video (see google drive link) 
+- demo.mp4 — CLI demonstration video : https://drive.google.com/file/d/1j4NJ8ODY2EHL6EoXTLpNoUudOuLzRHE6/view
+  
 
 ---
 
